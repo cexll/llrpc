@@ -1,49 +1,48 @@
 package llrpc
 
 import (
-	"log"
+	"context"
 	"net"
-	"sync"
+	"strings"
 	"testing"
 	"time"
 )
 
-func startServer(addr chan string) {
-	var foo Foo
-	if err := Register(&foo); err != nil {
-		log.Fatal("register error", err)
-	}
+type Bar int
 
-	l, err := net.Listen("tcp", ":0")
-	if err != nil {
-		log.Fatal("network error:", err)
-	}
-	log.Println("start rpc server on", l.Addr())
+func (b Bar) Timeout(argv int, reply *int) error {
+	time.Sleep(time.Second * 2)
+	return nil
+}
+
+func startServer(addr chan string) {
+	var b Bar
+	_ = Register(&b)
+
+	l, _ := net.Listen("tcp", ":0")
 	addr <- l.Addr().String()
 	Accept(l)
 }
 
 func TestClient(t *testing.T) {
-	log.SetFlags(0)
-	addr := make(chan string)
-	go startServer(addr)
-	client, _ := Dial("tcp", <-addr)
-	defer func() { _ = client.Close() }()
-
+	t.Parallel()
+	addrCh := make(chan string)
+	go startServer(addrCh)
+	addr := <-addrCh
 	time.Sleep(time.Second)
-	// send request & receive response
-	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			args := &Args{Num1: i, Num2: i * i}
-			var reply int
-			if err := client.Call("Foo.Sum", args, &reply); err != nil {
-				log.Fatal("call Foo.Sum error:", err)
-			}
-			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
-		}(i)
-	}
-	wg.Wait()
+	t.Run("client timeout", func(t *testing.T) {
+		client, _ := Dial("tcp", addr)
+		ctx, _ := context.WithTimeout(context.Background(), time.Second)
+		var reply int
+		err := client.Call(ctx, "Bar.Timeout", 1, &reply)
+		__assert(err != nil && strings.Contains(err.Error(), ctx.Err().Error()), "expect a timeout error")
+	})
+	t.Run("server handle timeout", func(t *testing.T) {
+		client, _ := Dial("tcp", addr, &Option{
+			HandleTimeout: time.Second,
+		})
+		var reply int
+		err := client.Call(context.Background(), "Bar.Timeout", 1, &reply)
+		__assert(err != nil && strings.Contains(err.Error(), "handle timeout"), "expect a timeout error")
+	})
 }
