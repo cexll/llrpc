@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cexll/llrpc/codec"
+	"github.com/go-ll/llrpc/codec"
 )
 
 const MagicNumber = 0x3bef5c
